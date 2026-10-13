@@ -24,3 +24,44 @@ DEMO_APPLICATIONS = [
     (4, 'found', 45, [(12, "Дедлайн подачі анкети", False)]),
     (5, 'rejected', 30, [(-10, "Відповідь від рекрутера", True)]),
 ]
+
+
+def fill_demo_data(user, full_name="Олександр Коваленко"):
+    """Створює демонстраційний каталог, профіль, заявки та нагадування для переданого користувача."""
+    ensure_skill_catalog()
+    now = timezone.now()
+    today = timezone.localdate()
+
+    profile = StudentProfile.get_profile(user)
+    profile.full_name = full_name
+    profile.save()
+    profile.skill_levels.all().delete()
+    for name in ('python', 'sql', 'rest'):
+        ProfileSkill.objects.create(profile=profile, skill=Skill.objects.get(name=name))
+
+    vacancies = []
+    for number, (company_name, position, skills, location, low, high, url) in enumerate(DEMO_VACANCIES, start=1):
+        company, _ = Company.objects.get_or_create(name=company_name)
+        vacancy, _ = Vacancy.objects.update_or_create(
+            source=DEMO_SOURCE, external_id=f'demo-{number}',
+            defaults={
+                'company': company, 'position': position, 'url': url, 'location': location,
+                'is_remote': location == "Віддалено", 'salary_min': low, 'salary_max': high,
+                'salary': f"{low}-{high} USD" if low else '',
+                'description': f"Демонстраційна вакансія: {position} у компанії {company_name}.",
+            },
+        )
+        vacancy.skills.set(Skill.objects.filter(name__in=skills))
+        vacancies.append(vacancy)
+
+    Application.objects.filter(user=user).delete()
+    for index, status, days_ago, reminders in DEMO_APPLICATIONS:
+        application = Application.objects.create(
+            user=user, vacancy=vacancies[index], status=status,
+            applied_at=None if status == 'found' else today - timezone.timedelta(days=days_ago),
+        )
+        Application.objects.filter(pk=application.pk).update(created_at=now - timezone.timedelta(days=days_ago))
+        for offset, text, done in reminders:
+            Reminder.objects.create(
+                application=application, remind_at=today + timezone.timedelta(days=offset), text=text, is_done=done,
+            )
