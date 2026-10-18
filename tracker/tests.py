@@ -959,3 +959,327 @@ class ModelTests(TestCase):
         self.assertEqual(application.get_absolute_url(), f'/applications/{application.pk}/')
         self.assertEqual(self.company.get_absolute_url(), f'/companies/{self.company.pk}/')
         self.assertEqual(self.python.get_absolute_url(), f'/skills/{self.python.pk}/')
+
+    def test_related_names(self):
+        application = Application.objects.create(user=self.user, vacancy=self.vacancy)
+        Reminder.objects.create(application=application, remind_at=date(2026, 11, 1), text='Тест')
+        self.assertEqual(self.python.vacancies.count(), 1)
+        self.assertEqual(self.company.vacancies.count(), 1)
+        self.assertEqual(self.user.applications.count(), 1)
+        self.assertEqual(application.reminders.count(), 1)
+
+    def test_constraints(self):
+        Application.objects.create(user=self.user, vacancy=self.vacancy)
+        with self.assertRaises(IntegrityError):
+            Application.objects.create(user=self.user, vacancy=self.vacancy)
+
+    def test_vacancy_unique_external_id_per_source(self):
+        Vacancy.objects.create(company=self.company, position='A', source='jobicy', external_id='1')
+        with self.assertRaises(IntegrityError):
+            Vacancy.objects.create(company=self.company, position='B', source='jobicy', external_id='1')
+
+    def test_company_protected_and_user_cascade(self):
+        with self.assertRaises(ProtectedError):
+            self.company.delete()
+        Application.objects.create(user=self.user, vacancy=self.vacancy)
+        self.user.delete()
+        self.assertEqual((Application.objects.count(), Vacancy.objects.count()), (0, 1))
+
+    def test_vacancy_in_use_cannot_be_deleted(self):
+        Application.objects.create(user=self.user, vacancy=self.vacancy)
+        with self.assertRaises(ProtectedError):
+            self.vacancy.delete()
+
+
+class RolesTests(TestCase):
+    def setUp(self):
+        self.owner = make_user('regular')
+        self.vacancy = make_vacancy('Acme', 'Dev')
+        self.application = Application.objects.create(user=self.owner, vacancy=self.vacancy)
+
+    def as_guest(self):
+        self.assertEqual(self.client.post(reverse('tracker:guest_login')).status_code, 302)
+        return User.objects.get(username='guest')
+
+    def test_guest_login_creates_readonly_account(self):
+        guest = self.as_guest()
+        self.assertEqual(get_role(guest), 'guest')
+        self.assertFalse(guest.has_usable_password())
+        self.assertEqual(list(guest.groups.values_list('name', flat=True)), ['Guest'])
+        self.assertEqual(Application.objects.filter(user=guest).count(), 0)
+        profile = StudentProfile.get_profile(guest)
+        self.assertEqual(profile.full_name, '')
+        self.assertFalse(profile.skill_levels.exists())
+
+    def test_guest_login_resets_previous_guest_data(self):
+        guest = self.as_guest()
+        Application.objects.create(user=guest, vacancy=self.vacancy)
+        self.client.post(reverse('tracker:logout'))
+        self.as_guest()
+        self.assertEqual(Application.objects.filter(user=guest).count(), 0)
+
+    def test_guest_login_requires_post(self):
+        self.assertEqual(self.client.get(reverse('tracker:guest_login')).status_code, 405)
+
+    def test_group_permissions(self):
+        ensure_roles()
+        guest = set(Group.objects.get(name='Guest').permissions.values_list('codename', flat=True))
+        user = set(Group.objects.get(name='User').permissions.values_list('codename', flat=True))
+        self.assertTrue(all(c.startswith('view_') or c == 'sync_vacancies' for c in guest))
+        self.assertTrue({'view_vacancy', 'view_company', 'view_skill', 'view_application', 'sync_vacancies'} <= guest)
+        self.assertNotIn('view_stats', guest)
+        self.assertTrue({'add_application', 'change_application', 'delete_application', 'view_stats',
+                         'add_reminder', 'change_reminder', 'delete_reminder', 'sync_vacancies'} <= user)
+        self.assertFalse(user & {'add_vacancy', 'change_vacancy', 'delete_vacancy', 'add_company'})
+
+    def test_ensure_roles_is_idempotent(self):
+        ensure_roles()
+        before = {g.name: g.permissions.count() for g in Group.objects.all()}
+        ensure_roles()
+        self.assertEqual(before, {g.name: g.permissions.count() for g in Group.objects.all()})
+
+    def test_guest_can_browse_catalog_list_and_profile_page(self):
+        self.as_guest()
+        for name in ('application_list', 'profile', 'company_list', 'skill_list'):
+            self.assertEqual(self.client.get(reverse(f'tracker:{name}')).status_code, 200, name)
+        self.assertEqual(self.client.get(self.vacancy.get_absolute_url()).status_code, 200)
+
+    def test_guest_gets_autoloaded_found_list_but_cannot_change_it(self):
+        with patch('tracker.views.sync_all_categories', side_effect=lambda user, **kw: (*sync_jobicy('Python', user=user), [])):
+            with patch('tracker.services.requests.get', return_value=jobicy_response(JOB)):
+                guest = self.as_guest()
+        item = Application.objects.get(user=guest)
+        self.assertEqual(item.status, 'found')
+        page = self.client.get(reverse('tracker:application_list'))
+        self.assertContains(page, 'Python Internship')
+        self.assertNotContains(page, 'name="status"')
+        self.assertEqual(self.client.post(reverse('tracker:change_status', args=[item.pk]), {'status': 'offer'}).status_code, 403)
+        item.refresh_from_db()
+        self.assertEqual(item.status, 'found')
+
+    def test_guest_cannot_use_applications_or_reminders(self):
+        self.as_guest()
+        reminder = Reminder.objects.create(application=self.application, remind_at=date(2030, 1, 1), text='Нагадування')
+        checks = [
+            ('post', reverse('tracker:application_add', args=[self.vacancy.pk])),
+            ('post', reverse('tracker:application_edit', args=[self.application.pk])),
+            ('post', reverse('tracker:application_delete', args=[self.application.pk])),
+            ('post', reverse('tracker:change_status', args=[self.application.pk])),
+            ('post', reverse('tracker:dismiss_application', args=[self.application.pk])),
+            ('post', reverse('tracker:reminder_add', args=[self.application.pk])),
+            ('post', reverse('tracker:reminder_toggle', args=[reminder.pk])),
+            ('post', reverse('tracker:reminder_delete', args=[reminder.pk])),
+        ]
+        for method, url in checks:
+            self.assertEqual(getattr(self.client, method)(url, {'status': 'offer'}).status_code, 403, url)
+        self.application.refresh_from_db()
+        self.assertEqual(self.application.status, 'found')
+        self.assertEqual(Application.objects.count(), 1)
+        self.assertEqual(Reminder.objects.count(), 1)
+
+    def test_guest_nav_hides_stats_link(self):
+        self.as_guest()
+        page = self.client.get(reverse('tracker:application_list')).content.decode()
+        self.assertIn(reverse('tracker:application_list'), page)
+        self.assertNotIn(reverse('tracker:stats'), page)
+
+    def test_guest_cannot_change_profile(self):
+        self.as_guest()
+        res = self.client.post(reverse('tracker:profile'), {'skill': ['python']})
+        self.assertEqual(res.status_code, 403)
+        self.assertFalse(StudentProfile.get_profile(User.objects.get(username='guest')).skill_levels.exists())
+
+    def test_guest_profile_page_asks_to_register(self):
+        self.as_guest()
+        res = self.client.get(reverse('tracker:profile'))
+        self.assertTemplateUsed(res, 'profile_guest.html')
+        self.assertContains(res, 'потрібно зареєструватися')
+
+    def test_guest_can_register_and_becomes_regular_user(self):
+        self.as_guest()
+        res = self.client.post(reverse('tracker:register'), {
+            'username': 'convert', 'password1': 'Str0ng-pass-77', 'password2': 'Str0ng-pass-77',
+        })
+        self.assertEqual(res.status_code, 302)
+        self.assertEqual(get_role(User.objects.get(username='convert')), 'user')
+        self.assertEqual(self.client.get(reverse('tracker:application_list')).status_code, 200)
+
+    def test_forbidden_page_explains_guest_limits(self):
+        self.as_guest()
+        res = self.client.get(reverse('tracker:stats'))
+        self.assertContains(res, 'Гість може лише переглядати', status_code=403)
+
+    def test_anonymous_sees_hero_page_on_home(self):
+        res = self.client.get(reverse('tracker:index'))
+        self.assertTemplateUsed(res, 'landing.html')
+        self.assertContains(res, reverse('tracker:guest_login'))
+        self.assertEqual(self.client.post(reverse('tracker:index')).status_code, 405)
+
+    def test_logged_in_user_is_sent_to_application_list(self):
+        self.client.force_login(self.owner)
+        self.assertRedirects(self.client.get(reverse('tracker:index')), reverse('tracker:application_list'))
+
+    def test_navbar_has_single_vacancies_item_without_reminders(self):
+        self.client.force_login(self.owner)
+        res = self.client.get(reverse('tracker:application_list'))
+        nav = res.content.decode().split('<main')[0]
+        self.assertEqual(nav.count('>Вакансії</a>'), 1)
+        self.assertIn(f'href="{reverse("tracker:application_list")}"', nav)
+        self.assertNotIn('Нагадування', nav)
+        self.assertNotIn('Мої заявки', nav)
+        self.assertNotContains(res, 'Каталог вакансій')
+        self.assertNotContains(res, 'Відстежувати')
+
+    def test_vacancy_cards_have_no_details_button(self):
+        self.client.force_login(self.owner)
+        self.assertNotContains(self.client.get(reverse('tracker:application_list')), 'Докладніше')
+
+    def test_no_hardcoded_urls_in_static_js(self):
+        from pathlib import Path
+        js = Path(__file__).resolve().parent.parent / 'static' / 'js'
+        self.assertFalse(js.exists() and any(js.iterdir()))
+
+    def test_reminder_pages_still_exist_without_menu_item(self):
+        self.client.force_login(self.owner)
+        self.assertEqual(self.client.get(reverse('tracker:reminder_list')).status_code, 200)
+
+    def test_anonymous_navbar_has_no_vacancies_tab(self):
+        nav = self.client.get(reverse('tracker:index')).content.decode().split('<main')[0]
+        self.assertNotIn('>Вакансії</a>', nav)
+        self.assertIn(reverse('tracker:login'), nav)
+        self.assertIn(reverse('tracker:register'), nav)
+
+    def test_anonymous_cannot_track_vacancy(self):
+        res = self.client.get(reverse('tracker:application_add', args=[self.vacancy.pk]))
+        self.assertEqual(res.status_code, 302)
+        self.assertIn('/login/', res['Location'])
+
+    def test_registered_user_gets_user_role_via_signal(self):
+        user = User.objects.create_user('signal', password=PASSWORD)
+        self.assertTrue(user.groups.filter(name='User').exists())
+
+    def test_existing_user_without_group_gets_user_role_after_migrate(self):
+        legacy = User.objects.create_user('legacy', password=PASSWORD)
+        legacy.groups.clear()
+        setup_roles(sender=None)
+        self.assertTrue(legacy.groups.filter(name='User').exists())
+
+    def test_superuser_keeps_full_access(self):
+        boss = User.objects.create_superuser('boss', password=PASSWORD)
+        self.client.force_login(boss)
+        self.assertEqual(self.client.get(reverse('tracker:stats')).status_code, 200)
+
+    def test_each_user_has_exactly_three_roles(self):
+        self.assertEqual(get_role(self.client_user()), 'user')
+        self.client.logout()
+        self.assertEqual(get_role(__import__('django.contrib.auth.models', fromlist=['AnonymousUser']).AnonymousUser()), 'anonymous')
+
+    def client_user(self):
+        self.client.force_login(self.owner)
+        return self.owner
+
+
+class ApiTests(TestCase):
+    def setUp(self):
+        self.user = make_user('api')
+        self.vacancy = make_vacancy('Acme', 'Python Intern', ['python'])
+        self.application = Application.objects.create(user=self.user, vacancy=self.vacancy)
+
+    def put(self, payload, pk=None):
+        return self.client.put(
+            reverse('tracker:api_application', args=[pk or self.application.pk]),
+            json.dumps(payload), content_type='application/json',
+        )
+
+    def test_vacancies_api_is_public_and_read_only(self):
+        url = reverse('tracker:api_vacancies')
+        res = self.client.get(url, {'q': 'acme'})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['count'], 1)
+        self.assertEqual(res['X-Request-Method'], 'GET')
+        self.assertEqual(self.client.get(url, {'skill': 'java'}).json()['count'], 0)
+        self.assertEqual(self.client.post(url, json.dumps({'company': 'X'}), content_type='application/json').status_code, 405)
+
+    def test_application_api_crud(self):
+        self.client.force_login(self.user)
+        url = reverse('tracker:api_application', args=[self.application.pk])
+        self.assertEqual(self.client.get(url).json()['application']['status'], 'found')
+        res = self.put({'status': 'offer', 'notes': 'ok'})
+        self.assertEqual(res.status_code, 200)
+        self.application.refresh_from_db()
+        self.assertEqual((self.application.status, self.application.notes), ('offer', 'ok'))
+        self.assertEqual(self.client.delete(url).status_code, 200)
+        self.assertFalse(Application.objects.exists())
+
+    def test_application_api_rejects_invalid_status_and_json(self):
+        self.client.force_login(self.user)
+        for bad in ('interview', 'found', 'x'):
+            self.assertEqual(self.put({'status': bad}).status_code, 400, bad)
+        res = self.client.put(reverse('tracker:api_application', args=[self.application.pk]),
+                              '{broken', content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+        self.application.refresh_from_db()
+        self.assertEqual(self.application.status, 'found')
+
+    def test_application_api_is_private(self):
+        foreign = Application.objects.create(user=make_user('other'), vacancy=make_vacancy('B', 'B'))
+        self.client.force_login(self.user)
+        url = reverse('tracker:api_application', args=[foreign.pk])
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(self.put({'status': 'offer'}, pk=foreign.pk).status_code, 404)
+        self.assertEqual(self.client.delete(url).status_code, 404)
+        self.assertEqual(Client().get(url).status_code, 302)
+
+    def test_guest_api_write_is_forbidden(self):
+        guest = Client()
+        guest.post(reverse('tracker:guest_login'))
+        url = reverse('tracker:api_application', args=[self.application.pk])
+        self.assertEqual(guest.put(url, '{"status": "offer"}', content_type='application/json').status_code, 403)
+        self.assertEqual(guest.delete(url).status_code, 403)
+        self.assertTrue(Application.objects.filter(pk=self.application.pk).exists())
+
+
+class TemplateTagTests(TestCase):
+    def render(self, source, **context):
+        return Template('{% load tracker_tags %}' + source).render(Context(context))
+
+    def test_status_badge(self):
+        html = self.render('{% status_badge "offer" %}')
+        self.assertIn('badge-offer', html)
+        self.assertIn('Зацікавило', html)
+
+    def test_query_string_keeps_filters_and_replaces_page(self):
+        request = RequestFactory().get('/vacancies/', {'q': 'py', 'page': '2', 'sort': 'old'})
+        html = self.render('{% query_string page=3 %}', request=request)
+        self.assertIn('q=py', html)
+        self.assertIn('sort=old', html)
+        self.assertIn('page=3', html)
+        self.assertNotIn('page=2', html)
+
+    def test_skill_pills_neutral_and_matched(self):
+        vacancy = make_vacancy(skills=['python', 'docker'])
+        neutral = self.render('{% skill_pills vacancy %}', vacancy=vacancy)
+        self.assertIn('pill-neutral', neutral)
+        matched = self.render('{% skill_pills vacancy match %}', vacancy=vacancy, match=vacancy.ai_match({'python'}))
+        self.assertIn('pill-match', matched)
+        self.assertIn('pill-miss', matched)
+
+    def test_reminder_badge_marks_overdue(self):
+        reminder = Reminder(remind_at=timezone.localdate() - timedelta(days=1), text='Тест')
+        html = self.render('{% reminder_badge reminder %}', reminder=reminder)
+        self.assertIn('reminder-overdue', html)
+        self.assertIn('прострочено', html)
+
+
+class DemoDataTests(TestCase):
+    def test_seed_data_builds_catalog_user_and_guest(self):
+        call_command('seed_data', stdout=Mock())
+        user = User.objects.get(username='demo')
+        self.assertTrue(user.check_password('demo12345'))
+        self.assertGreaterEqual(Vacancy.objects.count(), 8)
+        self.assertEqual(Application.objects.filter(user=user).count(), 6)
+        self.assertTrue(Reminder.objects.filter(application__user=user, is_done=False).exists())
+        self.assertTrue(User.objects.filter(username='guest').exists())
+        call_command('seed_data', stdout=Mock())
+        self.assertEqual(Vacancy.objects.filter(source='demo').count(), 8)
+        self.assertEqual(Application.objects.filter(user=user).count(), 6)
