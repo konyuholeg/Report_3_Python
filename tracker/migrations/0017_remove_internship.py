@@ -77,3 +77,53 @@ def copy_legacy_data(apps, schema_editor):
         for name in split_skills(profile.skills):
             ProfileSkill.objects.get_or_create(profile=profile, skill=get_skill(Skill, name, cache))
     StudentProfile.objects.filter(user__isnull=True).delete()
+
+
+def drop_internship_content_type(apps, schema_editor):
+    """Видаляє застарілий тип вмісту Internship разом із його правами (право sync_vacancies тепер у Vacancy)."""
+    ContentType = apps.get_model('contenttypes', 'ContentType')
+    ContentType.objects.filter(app_label='tracker', model='internship').delete()
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ('tracker', '0016_internship_is_hidden'),
+        ('contenttypes', '0002_remove_content_type_name'),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name='application',
+            name='is_hidden',
+            field=models.BooleanField(default=False, verbose_name='Нецікаво (приховано зі списку)'),
+        ),
+        migrations.AlterModelOptions(
+            name='vacancy',
+            options={
+                'ordering': ['-created_at', '-id'],
+                'permissions': [('sync_vacancies', 'Може завантажувати вакансії з API')],
+                'verbose_name': 'Вакансія', 'verbose_name_plural': 'Вакансії',
+            },
+        ),
+        migrations.RunPython(copy_legacy_data, migrations.RunPython.noop),
+        migrations.RemoveField(model_name='studentprofile', name='skills'),
+        migrations.AlterField(
+            model_name='studentprofile',
+            name='user',
+            field=models.OneToOneField(
+                on_delete=django.db.models.deletion.CASCADE, related_name='student_profile',
+                to=settings.AUTH_USER_MODEL, verbose_name='Користувач',
+            ),
+        ),
+        migrations.AlterField(
+            model_name='application',
+            name='applied_at',
+            field=models.DateField(
+                blank=True, null=True, validators=[tracker.validators.validate_not_future],
+                verbose_name='Дата подачі заявки',
+            ),
+        ),
+        migrations.DeleteModel(name='Internship'),
+        migrations.RunPython(drop_internship_content_type, migrations.RunPython.noop),
+    ]

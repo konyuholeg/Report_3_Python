@@ -1,0 +1,50 @@
+.lp-hero {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 32px;
+  align-items: center;
+  padding: 44px 40px;
+  margin: 8px 0 28px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #14204a 0%, #1f3578 55%, #3558e6 100%);
+  color: #ffffff;
+  box-shadow: 0 12px 32px rgba(20, 32, 74, 0.25);
+}
+.lp-label {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.16);
+  margin-bottom: 14px;
+}
+.lp-hero h1 {
+  font-size: 38px;
+  line-height: 1.15;
+  font-weight: 700;
+  margin-bottom: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+}
+.lp-lead {
+  font-size: 16px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.85);
+  max-width: 480px;
+  margin-bottom: 24px;
+}
+.lp-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.lp-actions form { margin: 0; }
+.lp-btn-light { background: #ffffff; color: #14204a; box-shadow: none; }
+.lp-btn-light:hover { background: #e8ecf7; }
+.lp-btn-ghost {
+  background: transparent;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+.lp-btn-ghost:hover { background: rgba(255, 255, 255, 0.14); }
+.lp-hero .btn { padding: 10px 18px; font-size: 14px; }
