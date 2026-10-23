@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Internship Tracker — відстежуйте стажування{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'css/landing.css' %}">
+
+<section class="lp-hero">
+  <div>
+    <span class="lp-label">Для студентів і початківців в IT</span>
+    <h1>Усі ваші стажування в одному місці</h1>
+    <p class="lp-lead">
+      Завантажуйте актуальні вакансії, відстежуйте етапи відбору та дізнавайтеся,
+      яких навичок вам бракує для кожної позиції.
+    </p>
+    <div class="lp-actions">
+      <a href="{% url 'tracker:register' %}" class="btn lp-btn-light">Створити акаунт</a>
+      <a href="{% url 'tracker:login' %}" class="btn lp-btn-ghost">Увійти</a>
+      <form method="POST" action="{% url 'tracker:guest_login' %}">
+        {% csrf_token %}
+        <button type="submit" class="btn lp-btn-ghost">Спробувати як гість</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="lp-preview" aria-hidden="true">
+    <div class="lp-preview-company">SoftServe</div>
+    <div class="lp-preview-title">Python Internship</div>
+    <div class="lp-preview-row">
+      <span class="badge badge-applied">Подано заявку</span>
+      <span class="badge badge-match-mid">Збіг навичок: 67%</span>
+    </div>
+    <div class="lp-preview-skills">
+      <span class="pill pill-match">python</span>
+      <span class="pill pill-match">sql</span>
+      <span class="pill pill-miss">docker</span>
+    </div>
+    <div class="lp-bar"><span></span></div>
+  </div>
+</section>
