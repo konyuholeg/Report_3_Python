@@ -39,3 +39,47 @@
     <div class="lp-bar"><span></span></div>
   </div>
 </section>
+
+<h2 class="lp-section-title">Що вміє трекер</h2>
+<div class="lp-grid">
+  <div class="card lp-feature">
+    <h3>Вакансії з API</h3>
+    <p>Після входу вакансії всіх напрямків автоматично завантажаться з Jobicy та збережуться у вашому списку разом із вимогами.</p>
+  </div>
+  <div class="card lp-feature">
+    <h3>Режим прогалин</h3>
+    <p>Відмітьте свої навички в профілі, і для кожної вакансії буде видно, що вже збігається, а чого бракує.</p>
+  </div>
+  <div class="card lp-feature">
+    <h3>Воронка відбору</h3>
+    <p>Змінюйте статус від «Знайдено» до «Оффер» і дивіться статистику та діаграму за потрібний період.</p>
+  </div>
+</div>
+
+<h2 class="lp-section-title">Як це працює</h2>
+<div class="lp-grid">
+  <div class="card lp-feature">
+    <div class="lp-step-num">1</div>
+    <h3>Зареєструйтесь</h3>
+    <p>Створіть акаунт за хвилину або спробуйте сайт як гість.</p>
+  </div>
+  <div class="card lp-feature">
+    <div class="lp-step-num">2</div>
+    <h3>Отримайте вакансії</h3>
+    <p>Вакансії всіх напрямків підтягнуться самі. Відсортуйте їх кнопкою «Сортувати».</p>
+  </div>
+  <div class="card lp-feature">
+    <div class="lp-step-num">3</div>
+    <h3>Ведіть відбір</h3>
+    <p>Відмічайте навички, змінюйте статуси й слідкуйте за прогресом.</p>
+  </div>
+</div>
+
+<div class="card lp-cta">
+  <h2>Готові почати?</h2>
+  <div class="lp-actions">
+    <a href="{% url 'tracker:register' %}" class="btn btn-primary">Створити акаунт</a>
+    <a href="{% url 'tracker:login' %}" class="btn btn-outline-secondary">Увійти</a>
+  </div>
+</div>
+{% endblock %}
