@@ -18,11 +18,13 @@ def skill_pills(vacancy, match=None):
     Вимоги вакансії у вигляді позначок. З match (зареєстрований користувач) збіглі й відсутні
     навички підсвічуються; без нього всі позначки нейтральні.
     """
+    skills = list(vacancy.skills.all())
+    languages = [s.title for s in skills if s.category == 'lang']
     return {
-        'skills': [s.title for s in vacancy.skills.all()],
+        'skills': [s.title for s in skills],
         'match': match,
         'level': vacancy.get_level_display() if vacancy.level else '',
-        'languages': [s.title for s in vacancy.skills.all() if s.category == 'lang'],
+        'level_for': languages or [s.title for s in skills][:4],
     }
 
 
